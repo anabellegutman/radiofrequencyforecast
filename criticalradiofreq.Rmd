@@ -1,11 +1,3 @@
----
-title: "PSTAT 174 Final Project"
-author: "Anabelle Gutman"
-output:
-  html_document:
-    df_print: paged
-date: "2023-12-08"
----
 
 **Executive Summary**
 
