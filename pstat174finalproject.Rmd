@@ -1,0 +1,576 @@
+---
+title: "PSTAT 174 Final Project"
+author: "Anabelle Gutman"
+output:
+  html_document:
+    df_print: paged
+date: "2023-12-08"
+---
+
+**Executive Summary**
+
+Throughout this project I sought to find the most efficient time series model to help forecast monthly critical radio frequencies. In this I aimed to answer the question of how critical radio frequencies change over long periods of time since they flucuate with the time of day and atmospheric conditions. Tracking and monitoring their stability is essential for maintaining telecommunication services which is one of society's largest foundations. To answer this question I employed many strategies to find the best possible SARIMA$(p, d, q) × (P, D, Q)_{s}$ model for my time series data. To do so I tested different transformations and differencing techniques. After deciding to use a box-cox transformation and difference at both lags 12 and 1, I tested many different SARIMA models by checking their coefficients, AICc, roots, and normality, and found that SARIMA$(3, 1, 1) × (1, 2, 1)_{12}$ was the best candidate.
+
+
+**Introduction**
+
+Critical frequency denotes the maximum frequency magnitude at which radio waves penetrate the ionosphere and below this threshold, the waves undergo reflection. Within the radio spectrum, these frequencies play a pivotal role in facilitating effective telecommunication. Telecommunication broadly encompasses telegraph, telephone, radio, television, videotelephony, satellites, closed computer networks and the public internet. The dynamic nature of critical radio frequencies is influenced by factors such as the time of day, atmospheric conditions, and the radio waves' angle of incidence, results in fluctuating patterns. Monitoring and documenting changes in critical frequencies serves as a strategic approach for broadcasters to plan and optimize radio spectrum utilization. This continuous assessment also contributes to the development of innovative technologies and equipment in the field of telecommunication
+
+The significance of tracking critical frequencies is evident given that they are essential for efficient telecommunications, international coordination, emergency communication, and technological advancements. The acquired insights aid in maintaining stable communication systems, ensuring connectivity for a wide variety of uses from staying informed about global events to contacting loved ones to rescuing people during emergencies.
+
+
+**Inspiration**
+
+My keen interest in telecommunication stems from my experience at a summer internship at my county's investigations bureau, where I had the opportunity to visit a Regional Operations Center. In the Regional Operations Center I had the opportunity to visit the room where designated officials congregate and communicate during natural disasters and national emergencies. I got to see the many different telecommunication systems stored away in case of emergency, all designed meticulously to withstand different catastrophic environments. Understanding how information is transmitted through various technologies is not only fascinating but also integral to everyday life, connecting people worldwide. Consequently, monitoring monthly critical radio frequencies becomes crucial for upholding this stability.
+
+
+**Data Description**
+
+In my pursuit of this interest, I have chosen to analyze a well-known physics data set from the Time Series Data Library package. This data set spans from May 1934 to April 1954 and comprises observations of monthly critical radio frequencies, specifically highlighting the highest frequency usable for broadcasting. This time series data set is comprised of 240 observations with no missing data and no oddly sharp or irregular behavior in the data. By first looking at it you can also notice clear seasonality which makes it a great fit for a time series analysis. 
+
+
+**Goal**
+
+This project aims to contribute to a deeper understanding of historical trends and variations in critical radio frequencies, thereby enriching our overall knowledge that contributes to our maintenance and advancement of telecommunication. By testing and employing various models to this time series data we can forecast and strive to make accurate predictions about future monthly critical radio frequencies.
+
+
+**Techniques**
+Throughout this project I'll employ many techniques used to isolate the best possible SARIMA$(p, d, q) × (P, D, Q)_{s}$ model. I'll begin by plotting, inspecting, and decomposing the time series to look for potential seasonality and/or trends. From there I will test different transformations, such as the box-cox transformation and the log transformation, and compare them along with the original non-transformed time series to select the one with the lowest variance to move forwards with. From there I will check if the data needs to be de-seasonalized or de-trended/seasonalized by differencing the data on lag = 12 as well as lag = 12 and lag = 1 to see there exist seasonal or trend components that should be removed. After deciding that, I will then move onto finding an optimal SARIMA$(p, d, q) × (P, D, Q)_{s}$ model by testing out many different options. I will then run them through many different tests, checking their coefficients, AICc, roots, and normality. Once I find the best model that I can, I'll forecast the data on the training set and then see how it compares to the testing data.
+
+
+**Sources:**
+
+*Data:*
+
+TSDL - https://pkg.yangzhuoranyang.com/tsdl/articles/tsdl.html
+From here I was able to see the types of data sets available and chose one to work with
+
+
+*Critical radio frequencies information:*
+
+Unscrambling the Mysteries of HF State-wide Communications - https://qsl.net/nf4rc/2020/CriticalFrquency.pdf
+Wikipedia - https://en.wikipedia.org/wiki/Critical_frequency#:~:text=Critical%20frequency%20is%20the%20highest,denoted%20by%20%22fc%22
+ScienceDirect - https://www.sciencedirect.com/topics/earth-and-planetary-sciences/critical-frequency 
+TechTarget - https://www.techtarget.com/searchnetworking/definition/telecommunications-telecom#:~:text=Important%20telecommunication%20technologies%20include%20the,networks%20and%20the%20public%20internet  
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(tsdl)
+library(dplyr)
+library(tsibble)
+library(MASS)
+library(astsa)
+library(MuMIn) 
+library(forecast)
+library(zoo)
+library(xts)
+library(UnitCircle)
+```
+
+```{r}
+physics <- subset(tsdl, 12, "Physics")
+physics
+```
+
+```{r}
+attributes(physics[[4]])
+```
+
+I selected the critical radio frequency time series data which is the 4th TSDL physics data set
+```{r}
+radio_ts <- physics[[4]]
+radio_ts
+```
+
+Plotting the monthly critical radio frequency data helped visualize of the number of monthly critical radio frequencies detected over time from May 1934 and April 1954.
+```{r}
+ts.plot(radio_ts, main = "Monthly Critical Radio Frequencies Detected (May 1934 – April 1954)", ylab = "Critical Radio Frequencies")
+```
+
+I added a regression line to the plot to see if the number of critical radio frequencies generally increased or decreased over time.
+```{r}
+trend <- lm(radio_ts ~ time(radio_ts))
+plot(radio_ts, main = "Monthly Critical Radio Frequencies Detected (May 1934 – April 1954)", ylab = "Critical Radio Frequencies")
+abline(trend, col = "red")
+```
+
+Looking at the trend line you can see that the number of critical radio frequencies slightly decreased over the course of the 20 years they were studied.
+
+Inspecting the decomposition of a time series allows you to look at seasonal, trend, and irregular components using moving averages.
+```{r}
+component <- decompose(radio_ts)
+plot(component)
+```
+
+From the plot above, we can see two main peaks over the time period indicating a trend every 10 years. When you look at the seasonal pattern part of the decomposition you can see a consistent and uniform pattern, indicating a strong seasonal trend. The variance appears to not be too stable with many fluctuations between -2 and 1 throughout the data, but also there aren't too many abnormal spikes.
+
+First, it's important to find the sample size so you can see how to split the data into training and testing data.
+```{r}
+length(radio_ts)
+```
+
+
+**Divide data to training and test sets. Use training set for modeling and tests set for validation.**
+Next I split the data into training and testing data. I used the first 19 years (228 observations) of data as training data and the last year, which was 12 observations, as testing data.
+```{r}
+# training data
+radio_training = radio_ts[c(1:228)]
+radio_training
+
+# testing data
+radio_testing = radio_ts[c(229:240)]
+radio_testing
+```
+
+**Plot and analyze the time series (training set)**
+
+To observe and analyze the training data I plotted it along with a trend line.
+```{r}
+plot(1: length(radio_training), radio_training, main = "Monthly Critical Radio Frequencies Detected (May 1934 – April 1953)", type = 'l', xlab = "index")
+index = 1: length(radio_training)
+trend <- lm(radio_training ~ index)
+abline(trend, col = "red")
+```
+
+When looking at the training data there seems to be a slightly negative trend when plotting the trend line, but it isn't very significant. There are strong indications of seasonality though because as time passes there are spikes in the number of critical radio frequencies detected over a larger trend that shows a period of roughly every 10 years.There don't appear to be any sharp changes in behavior that aren't reminiscent of the time series seasonality.
+
+
+Plot the histogram to check the non-stationarity of the training data set from the original data
+```{r}
+hist(radio_training, col = 'red', main = "Histogram of Training Data", ylab = expression(X[t]), xlab = '') 
+```
+
+The histogram doesn't look very Gaussian because instead of making a bell-shape, it slopes more consistently downward.
+
+
+```{r}
+op = par(mfrow = c(1,2))
+
+# plot ACF of the original data
+acf(radio_training, lag.max = 60, main = "")
+
+# plot PACF of the original data
+pacf(radio_training, lag.max = 60, main = "")
+```
+
+The ACF of the training data is very interesting looking because it's lags fall far outside of the confidence interval and appear to have seasonal curves that become smaller over time until they become negative, for which they beging to grow more negative over time. The PACF shows values dipping outside of the confidence interval at first and as the lag increases they begin falling more close to 0. They are almost strictly positive (disregarding lags 1 and 4) until lag 12 where the PACF spontaneously becomes more consistently negative. 
+
+After plotting and analyzing the time series training set you can see that there appears to be a trend over the course of the data shaped like two curves, each spanning approximately 10 years. There also appears to be a distinct seasonal component with many spikes throughout the plot in addition to the trend. But luckily there don't appear to be any apparent sharp changes in behavior that are irregular.
+
+
+**Transformations**
+When figuring out what transformations are effective it's best to test them and then see how the variance differs from the variance of the original data. If the variance is lower than it's effective to implement that transformation.
+
+*Box-Cox Transformation*
+Box-cox transformations are useful because they stabilize variance and/or seasonal effect and make data more normally-like distributed. 
+```{r}
+t = 1:length(radio_training)
+fit = lm(radio_training ~ t)
+bcTransform = boxcox(radio_training ~ t,plotit = TRUE)
+```
+
+Find the optimal lambda and transform the data
+```{r}
+lambda = bcTransform$x[which(bcTransform$y == max(bcTransform$y))]
+training_bc = (1/lambda)*(radio_training**lambda-1)
+lambda
+```
+
+To initiate a Box-Cox transformation, you additionally needed to find lambda which was used to determine if the data required transformation. The lambda I found was -0.3030303.
+
+*Log Transformation*
+
+```{r}
+training_log <- log(radio_training)
+```
+
+
+*Plot the original training data, Box-Cox transformed data, and Log transformed data*
+
+Plot the original time series
+```{r}
+ts.plot(radio_training, main = "Original Data", ylab = expression(X[t]))
+```
+
+Plot the Box-Cox transformed time series
+```{r}
+ts.plot(training_bc, main = "Box-Cox Transformed Data", ylab = expression(Y[t]))
+```
+
+Plot the Log Tranformed time series
+```{r}
+ts.plot(training_log, main = "Log Tranformed Data", ylab = expression(Z[t]))
+```
+
+
+
+*Compare the original data histogram, the box-coxCox transformed data histogram, and the log transformed data histogram*
+
+Histogram of training data
+```{r}
+hist(radio_training, col = 'red', main = "Histogram of Training Data", ylab = 'Frequency', xlab = '')
+```
+
+The histogram doesn't look very Gaussian because instead of making a bell-shape, it mostly slopes downward and then up slightly again.
+
+
+Histogram of box-cox transformed data
+```{r}
+hist(training_bc, col = 'blue', main = "Histogram of Box-Cox Transformed Data", ylab = 'Frequency', xlab = '')
+```
+
+The histogram is also not very Gaussian, showing quite a lot of variance.
+
+Histogram of log transformed data
+```{r}
+hist(training_log, col = 'yellow', main = "Histogram of Log Transformed Data", ylab = 'Frequency', xlab = '')
+```
+
+The histogram is also not very Gaussian, showing quite a lot of variance similar to the histogram of the box-cox transformed data.
+
+
+```{r}
+var(radio_training)
+var(training_bc)  # lowest variance = best
+var(training_log)
+```
+
+The Box-Cox Transformation produced the lowest and hence the best variance so therefore this transformation produced the most stable data and should be used in the project going forward.
+
+Next I want to plot the ACF and PACF of the box-cox transformed data to get a better idea of what it visually looks like.
+```{r}
+op = par(mfrow = c(1,2))
+acf(training_bc, lag.max = 40, main = "")
+pacf(training_bc, lag.max = 40, main = "")
+title("Box-Cox Transformed Time Series", line = -1, outer = TRUE)
+```
+
+*Testing to see if differencing is necessary*
+
+Differencing the data can help remove seasonal components
+
+The first test I want to perform to see if differencing is necessary is to difference the box-cox transformed data at lag = 12 to remove a seasonal component.
+
+```{r}
+training_bc_12 = diff(training_bc, 12)
+plot(training_bc_12, main = "De-seasonalized Time Series of Box-Cox Transformed Data (Differenced at Lag 12)", ylab = expression(nabla^{12}~Y[t]), type = 'l')
+index = 1: length(training_bc_12)
+trend <- lm(training_bc_12 ~ index)
+abline(trend, col = "red")
+abline(h = 0, lty = 2)
+abline(h = mean(training_bc_12) , col = 'blue')
+```
+
+The trend line has a negative slope, showing a trend over time.
+
+ACF and PACF of De-seasonalized Box-Cox Transformed Data
+```{r}
+op = par(mfrow = c(1,2))
+acf(training_bc_12, lag.max = 40, main = "")
+pacf(training_bc_12, lag.max = 40, main = "")
+title("De-seasonalized Time Series for Box-Cox Transformed Data", line = -1, outer = TRUE)
+```
+
+Differencing the time series by lag = 12 helped remove the seasonal component and made gave ACF a negative linear trend. Looking at the PACF, differencing by lag = 12 helped the model have less values that fell outside of the 95% confidence interval.
+
+
+After differencing to remove the seasonal component, we need to assess whether we need to difference at lag = 1 to remove the trend.
+
+```{r}
+training_bc_12_1 = diff(training_bc_12, 1)
+plot(training_bc_12_1, main = "De-trended/seasonalized Time Series of of Box-Cox Transformed Data (Differenced at Lag 12 & Lag 1)", ylab = expression(nabla^{12}~Y[t]), type = 'l')
+abline(h = 0, lty = 2)
+```
+
+ACF and PACF of De-trended/seasonalized Box-Cox Transformed Data
+```{r}
+op = par(mfrow = c(1,2))
+acf(training_bc_12_1, lag.max = 40, main = "")
+pacf(training_bc_12_1, lag.max = 40, main = "")
+title("De-trended/seasonalized Time Series for Box-Cox Transformed Data",line = -1, outer = TRUE)
+```
+
+Differencing the time series by both lag = 12 and lag = 1 helped remove the seasonal and trend components. When observing the ACF it now looks a lot more stable, with much fewer values dipping outside of the confidence interval. Looking at the PACF, differencing by both lag = 12 and lag = 1 helped the model have less values fall outside of the 95% confidence interval as well. Overall these ACF and PACF charts look a lot better than the ACFs and PACFs of the time series that were not differenced or differenced just at lag = 12.
+
+
+```{r}
+# variance of the box-cox transformed data
+var(training_bc)
+
+# variance of the de-seasonalized data
+var(training_bc_12)
+
+# variance of the de-trended/seasonalized data
+var(training_bc_12_1)  # lowest variance so best
+```
+
+When checking the variance for the box-cox transformed datam, the de-seasonalized data differenced by 12, and the de-trended/seasonalized data differenced at by 12 and 1, you can see that the variance of the de-trended/seasonalized data is the best so therefore it's the model we should select from the three options.
+
+*Histogram of original training data*
+```{r}
+hist(radio_training, col = 'red', main = "Histogram of Training Data", ylab = 'Density', xlab = '', xlim = c(3, 15), freq = FALSE)
+curve(dnorm(x, mean = mean(radio_training), sd = sqrt(var(radio_training))), add = TRUE)
+```
+
+*Histogram of box-cox transformed data*
+```{r}
+hist(training_bc, col = 'blue', main = "Histogram of Box-Cox Transformed Data", xlim = c(1, 2), ylim = c(0, 3), ylab = 'Density', xlab = '', freq = FALSE)
+curve(dnorm(x, mean = mean(training_bc), sd = sqrt(var(training_bc))), add = TRUE)
+```
+
+*Histogram of de-seasonalized box-cox transformed data*
+```{r}
+hist(training_bc_12, col = 'yellow', main = "Histogram of Box-Cox Transformed & De-Seasonalized Data", ylim = c(0, 5), xlim = c(-0.5, 0.5), ylab = 'Density', xlab = '', freq = FALSE)
+curve(dnorm(x, mean = mean(training_bc_12), sd = sqrt(var(training_bc_12))), add = TRUE)
+```
+
+*Histogram of de-trended/seasonalized log transformed data*
+```{r}
+hist(training_bc_12_1, col = 'green', main = "Histogram of Box-Cox Transformed & De-Trended/Seasonalized Data", ylim = c(0, 8), xlim = c(-0.3, 0.3), ylab = 'Density', xlab = '', freq = FALSE)
+curve(dnorm(x, mean = mean(training_bc_12_1), sd = sqrt(var(training_bc_12_1))), add = TRUE)
+```
+
+The histograms for the original training data, box-cox transformed data, and box-cox transformed & de-seasonalized data are all a bit wide, while the box-cox transformed & de-trended/seasonalized data has the most symmetric and Gaussian looking curve. therefore the best model appears to be the box-cox transformed & de-trended/seasonalized data.
+
+Best model: De-trended/seasonalized Time Series for Log Transformed Data
+```{r}
+op = par(mfrow = c(1,2))
+acf(training_bc_12_1, lag.max = 40, main = "")
+pacf(training_bc_12_1, lag.max = 40, main = "")
+title("De-trended/seasonalized Time Series for Box-Cox Transformed Data", line = -1, outer = TRUE)
+```
+
+From the ACF plot, we can see that the ACF values are significant at lags 1, 2, 3, 12, and 13 because at these they are all outside of the 95% confidence interval. From the PACF plot, we see that the PACF values are significant at lags 1, 2, 3, 12, and 24 as they reach beyond the 95% confidence interval. When looking for potential SARIMA models you can inspect the ACF and PACF plots. 
+
+p: trend AR order
+d: trend difference order
+q: trend MA order
+
+P: seasonal AR order
+D: seasonal difference order
+Q: seasonal MA order
+
+Since there is a spike at lag 12 on both the ACF and PACF it's suggested that P = 1 and Q = 1.
+
+Since there are spikes at lags 1, 2, and 3 on the ACF and PACF it's reasonable to suggest that p = 1, 2, or 3 and q = 1, 2, or 3.
+
+When experimenting with different SARIMA models I initially tried D = 1 since there were significant lags at 12 in both ACF and PACF. This caused my models to consistently have at least one coefficient with the value -1 and low p-values when performing the Shapiro-Wilk normality test, Box-Pierce test, Ljung-Box test, and McLeod-Li test, so I changed it to D = 2 and these issues were resolved so I believe that a better value for D is 2. With further research this made a lot more sense because D = 2 means that the original time series has undergone two rounds of differencing to achieve stationarity. This is true given that I differenced at both lag = 12 and lag = 1 so hence I decided to have all of my possible SARIMA candidates have D = 2.
+
+Possible candidates: SARIMA$(p, d, q) × (P, D, Q)_{s}$
+
+1. SARIMA$(3, 1, 1) × (1, 2, 1)_{12}$
+2. SARIMA$(3, 1, 2) × (1, 2, 1)_{12}$
+3. SARIMA$(3, 2, 1) × (1, 2, 1)_{12}$
+
+
+**Model i:**
+
+```{r}
+fit.i <- arima(training_bc_12_1, order = c(3, 1, 1), seasonal = list(order = c(1, 2, 1), period = 12), method = "ML")
+fit.i
+```
+
+When two times the standard error is larger than the absolute values of estimated coefficient, 0 is within the confidence interval of the coefficients. When this occurs it's best to turn the coefficients that experience this into 0.
+
+In the case of fit i, there are no occurrences of the absolute values of estimated coefficients being smaller than two times the standard error so I didn't have to make any of the coefficients equal to 0.
+
+Therefore the model can be written as:
+$(1 + 0.238B + 0.2512B^2 + 0.3107B^3)(1 + 0.7022B^{12})X_t = (1 - 0.9985B)(1 - 0.9984B^{12})Z_t$
+
+
+**Model ii:**
+
+```{r}
+fit.ii <- arima(training_bc_12_1, order = c(3, 1, 2), seasonal = list(order = c(1, 2, 1), period = 12), method = "ML")
+fit.ii
+```
+
+In the case of fit ii, there are occurrences of the absolute values of estimated coefficients being smaller than two times the standard error for ar1 and ma2 so I made this coefficient equal to 0.
+
+```{r}
+fit.ii.1 <- arima(training_bc_12_1, order = c(3, 1, 2), seasonal = list(order = c(1, 2, 1), period = 12), method = "ML", fixed = c(0, NA, NA, NA, 0, NA, NA), transform.pars = FALSE)
+fit.ii.1
+```
+
+Therefore the model for the coefficient adjusted fit ii can be written as:
+$(1 + 0.2074B^2 + )(1 + 0.7219B^{12})X_t = (1 - 1.0005B)(1 - 1.0016B^{12})Z_t$
+
+
+**Model iii:**
+```{r}
+fit.iii <- arima(training_bc_12_1, order = c(3, 2, 1), seasonal = list(order = c(1, 2, 1), period = 12), method = "ML")
+fit.iii
+```
+
+In the case of fit iii, there are no occurrences of the absolute values of estimated coefficients being smaller than two times the standard error so I didn't change any coefficients to 0.
+
+Therefore the model can be written as:
+$(1 + 0.7682B + 0.5908B^2 + 0.4769B^3)(1 + 0.6964B^{12})X_t = (1 - 0.9998B)(1 - 0.9984B^{12})Z_t$
+
+
+```{r}
+# Compute and compare AICc values
+AICc(fit.i)  # smallest so best model
+AICc(fit.ii)
+AICc(fit.ii.1) 
+AICc(fit.iii)  
+```
+
+After computing the AICc values you can see that the best fit is model ii that had it's coefficients fixed. The AICc values for all of the models are large negative numbers which is good to see because the smaller the AICc value, the better the balance is between model fit and complexity.
+
+
+**Model i**
+
+AR part: the absolute value of -0.238, -0.2512, and -0.3107 are smaller than 1 so those roots lie outside of the unit circle
+
+MA part: the absolute value of -0.9985 is smaller than 1 so the root lies outside of the unit circle
+
+SAR part: the absolute value of -0.7022 is smaller than 1 so the root lies outside of the unit circle
+
+SMA part: the absolute value of -0.9984 is smaller than 1 so the root lies outside of the unit circle
+
+
+*Roots of AR parts*
+```{r}
+uc.check(pol_ = c(1, -0.2380, -0.2512, -0.3107), plot_output = TRUE)
+```
+
+*Roots of MA parts*
+```{r}
+uc.check(pol_ = c(1, -0.9985), plot_output = TRUE)
+```
+
+```{r}
+uc.check(pol_ = c(1, -0.7022), plot_output = TRUE)
+```
+
+*Roots of SMA part*
+```{r}
+uc.check(pol_ = c(1, -0.9984), plot_output = TRUE)
+```
+
+I started by looking at the AR, MA, SAR, and SMA component values of Model i and noticed that their absolute values were smaller than 1 so this hinted at the fact that they would all fall outside of the unit circle. I confirmed this by plotting the roots to see if they fell outside of the unit circle or not. Since the tests passed, all of the AR, MA, SAR, and SMA components falls outside of the unit circle and hence the model is both stationary and invertible.
+
+
+**Diagnostic Checking for Model i**
+
+To check if the residuals of the model follow White Noise distribution, we need to perform several diagnostic checks. We first check normality assumptions and get the plots below.
+
+```{r}
+res = residuals(fit.i)
+par(mfrow=c(2,2))
+hist(res, breaks=20, col="blue", xlab="", prob=TRUE, main="Histogram of residuals of model B")
+
+m <- mean(res)
+std <- sqrt(var(res))
+curve( dnorm(x,m,std), add=TRUE )
+plot.ts(res ,ylab= "residuals of model B", main="Residuals plot of model B")
+
+fitt <- lm(res ~ as.numeric(1:length(res)))
+abline(fitt, col="red")
+abline(h=mean(res), col="blue")
+qqnorm(res,main= "Normal Q-Q Plot for Model B")
+qqline(res,col="blue")
+```
+
+We can observe that it roughly follow a normal distribution from the histogram and q-q plot. Also, there is no trend or obvious seasonality from the time series plot of the residuals.
+
+When performing different normality tests it's optimal to have a p-value that is greater than 0.05 because this suggests statistical significance.
+
+*Shapiro-Wilk Normality Test*I 
+```{r}
+shapiro.test(res)
+```
+Unfortunately, I was not able to pass the Shapiro-Wilk normality test with this model since 0.0006524 is smaller than 0.05.
+
+*Box-Pierce test*
+```{r}
+Box.test(res, lag = 10, type = c("Box-Pierce"), fitdf = 3)
+```
+Model i was able to pass the Box-Pierce test with a very high p-value of 0.9604.
+
+*Ljung-Box test*
+```{r}
+Box.test(res, lag = 10, type = c("Ljung-Box"), fitdf = 3)
+```
+ Model i was able to pass the Ljung-Box test with a very high p-value of 0.9565
+ 
+*McLeod-Li test*
+```{r}
+Box.test(res**2, lag = 10, type = c("Ljung-Box"), fitdf = 0)
+```
+Model i was able to pass the McLeod-Li test with a p-value of 0.1324
+ 
+```{r}
+ar(res, aic = TRUE, order.max = NULL, method = c("yule-walker"))
+```
+
+The only test that failed was the Shapiro-Wilk Normality Test as the other tests all had p-values that were greater than 0.05.
+
+*ACF and PACF of the residuals of Model i*
+```{r}
+par(mfrow=c(1,2))
+acf(res, lag.max=40,main="")
+title("ACF of the Residuals of Model i")
+pacf(res, lag.max=40,main="")
+title("PACF of the Residuals of Model i")
+```
+
+The ACF and PACF of the residuals of Model i have values almost entirely within the 95% confidence interval, which is great! The only lags that dip out of the confidence intervals are lag = 24 for both the ACF and PACF.
+
+
+**Best model:** SARIMA$(3, 1, 1) × (1, 2, 1)_{12}$ model with equation $(1 + 0.238B + 0.2512B^2 + 0.3107B^3)(1 + 0.7022B^{12})X_t = (1 - 0.9985B)(1 - 0.9984B^{12})Z_t$
+
+
+```{r}
+best <- arima(radio_training, order = c(3, 1, 1), seasonal = list(order = c(1, 2, 1), period = 12), method = "ML")
+forecast(best)
+```
+
+
+**Forecasting**
+
+With forecasting you can predict future data based on the training data and then compare it to the testing data. In this case, my training data is 19 years of critical radio frequency data and my testing data is 1 year of critical radio frequency data. We can compare the predicted data for the last year with the actual data and see how well our model performed.
+```{r}
+pred.tr <- predict(best, n.ahead = 12)
+U.tr= pred.tr$pred + 2*pred.tr$se
+L.tr= pred.tr$pred - 2*pred.tr$se
+ts.plot(radio_training, xlim=c(1,length(radio_training)+12), ylim = c(min(radio_training)-3,max(U.tr)+3))
+lines(U.tr, col="blue", lty="dashed")
+lines(L.tr, col="blue", lty="dashed")
+points((length(radio_training)+1):(length(radio_training)+12), pred.tr$pred, col="red")
+```
+
+Above I forecasted on the training data using the best SARIMA model I could find, SARIMA$(3, 1, 1) × (1, 2, 1)_{12}$. In this chart you can see that the curve is predicted to be a bit lower than the other curve directly before it. This is an accurate representation because the data goes through a trend shaped like 2 normally distributed curves on top of the seasonal fluctuations. The predicted data would be towards the lower region of the second bell-curved trend so it would make sense for it to fall slightly lower than the seasonal pattern directly before it. The confidence interval for this is decently large though, accounting for the possibility of the predicted data being the beginning of a new bell-curved trend in the data. It makes sense that this would be accounted for in the confidence interval because according to the prior data, the bell shaped curves in the data typically spanned approximately 10.4 years each. Since the training data ends at 19 years this leaves the possibility for the data in the 20th year to possibly be the start of a new bell curve shape in the data.
+
+```{r}
+ts.plot(radio_training, xlim = c(200,length(radio_training)+12), ylim = c(0,12),ylab="Critical radio frequencies",main="Zoomed in visualization of forecasting on testing set")
+lines(U.tr, col="blue", lty="dashed")
+lines(L.tr, col="blue", lty="dashed")
+points((length(radio_training)+1):(length(radio_training)+12), pred.tr$pred, col="red")
+```
+
+When zooming into the forecast data you get a clearer visual of the projected data. Looking at this forecast, it seems very reasonable and follows pretty directly from the training data.
+
+```{r}
+ts.plot(ts(radio_ts), xlim = c(200,length(radio_ts)+12), ylim = c(0,12),ylab="Critical radio frequencies",main="Zoomed in visualization of forecasting on testing set")
+lines(U.tr, col="blue", lty="dashed")
+lines(L.tr, col="blue", lty="dashed")
+points(((length(radio_ts)+1):(length(radio_ts)+12))-12, pred.tr$pred, col="red")
+```
+
+Lastly, I looked into how the forecast compared to the actual testing data derived from the last year of monthly critical radio frequency data. The predicted monthly critical radio frequency data aligned very well with the actual data, with the 1st, 2nd, 3rd, 4th, 5th, 9th, and 10th months of predicted data overlapping with the actual values. There were discrepancies regarding the 6th, 7th, 8th, 11th, and 12th months, but they weren't severe and still generally followed the trend of the actual data.
+
+
+**Conclusion**
+
+Throughout this project I performed many tests to find the most effective time series model to help forecast monthly critical radio frequencies. After deciding to use a box-cox transformation and difference at both lags 12 and 1, I tested many different SARIMA models by checking their coefficients, AICc, roots, and normality, and found that the model SARIMA$(3, 1, 1) × (1, 2, 1)_{12}$ with the equation $(1 + 0.238B + 0.2512B^2 + 0.3107B^3)(1 + 0.7022B^{12})X_t = (1 - 0.9985B)(1 - 0.9984B^{12})Z_t$ was the best candidate. By forecasting, I attempted to predict the monthly critical radio frequencies from May 1953 – April 1954 based on our model and then compare with the true values. Generally this model resulted in accurate forecasting as the forecasted values fell almost exactly on the line plotting the actual data. Because of this, I think that this proved to be a successful model that can help make predictions about monthly critical radio frequencies and prevent telecommunication errors!
+
+
+**References**
+
+I received help from TA Lihao in office hours when attempting to write the code for the forecasting section. My plot kept producing very weird results (such as a straight line at y = 1) so I asked for help. I also referenced all of the labs and materials PDFs for the labs, along with the lecture notes and slides. I also did research to learn more about critical radio frequencies since my knowledge wasn't very advanced on the subject at first.
+
+
+
